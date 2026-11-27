@@ -155,10 +155,12 @@ def extract_vpg_po_items(pdf_file) -> list[dict]:
     reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
     extracted = []
 
-    item_start_re = re.compile(r"^\s*(\d{1,3})\s+([A-Z0-9][A-Z0-9\-_./]{2,25})\s+(.+)$")
+    # Matches real line items starting with line number + part code (e.g. S2700-0034, S0700-0124)
+    item_start_re = re.compile(r"^\s*(\d{1,3})\s+([A-Z]\d{3,4}-\d{3,5})\s+(.+)$")
     num_token_re = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)")
     date_re = re.compile(r"\b\d{2}/\d{2}/\d{4}\b")
 
+    junk_codes = {"MTR", "MTRS", "EA", "PC", "PCS", "KG", "M", "MM", "CM", "DRAW", "REV", "PAGE"}
     stop_tokens = (
         "inco terms",
         "total amount",
@@ -192,7 +194,7 @@ def extract_vpg_po_items(pdf_file) -> list[dict]:
                 item_no = m.group(2).strip().upper()
                 rest = m.group(3).strip()
 
-                if date_re.fullmatch(item_no) or item_no.replace(".", "").isdigit():
+                if item_no in junk_codes or date_re.fullmatch(item_no):
                     i += 1
                     continue
 
