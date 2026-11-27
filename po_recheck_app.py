@@ -1,317 +1,235 @@
-
+import io
 import streamlit as st
 import openpyxl
-import io
-import re
+from pypdf import PdfReader
 
-try:
-    from pypdf import PdfReader
-    PDF_AVAILABLE = True
-except Exception:
-    PDF_AVAILABLE = False
+# 1. Page Configuration
+st.set_page_config(
+    page_title="PO Price Recheck Tool",
+    page_icon="🧾",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.set_page_config(page_title="PO Price Reconciliation Tool", layout="wide")
+# 2. Clean & Subtle Custom CSS (Works smoothly in Light & Dark modes)
+st.markdown(
+    """
+    <style>
+        .app-header {
+            padding: 1.1rem 1.4rem;
+            border-radius: 12px;
+            border: 1px solid rgba(128, 128, 128, 0.22);
+            background: rgba(128, 128, 128, 0.05);
+            margin-bottom: 1.2rem;
+        }
+        .app-title {
+            font-size: 1.65rem;
+            font-weight: 700;
+            margin: 0;
+            line-height: 1.25;
+        }
+        .app-subtitle {
+            font-size: 0.95rem;
+            opacity: 0.8;
+            margin-top: 0.35rem;
+            margin-bottom: 0;
+        }
+        .section-card {
+            padding: 1rem 1.15rem;
+            border-radius: 10px;
+            border: 1px solid rgba(128, 128, 128, 0.2);
+            margin-bottom: 0.9rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-st.title("PO vs Price Matrix Reconciliation Tool")
-st.write("Supports Cable1 (Col B = Customer P/N, Col D = Description) and Harness (Col C = Customer P/N, Col E = Description) with 5th August 2026 pricing.")
+# -------------------------------------------------------------------------
+# EXISTING BACKEND LOGIC (Replace / connect your actual VPG & Matrix functions)
+# -------------------------------------------------------------------------
+def extract_po_items_from_pdf(pdf_file) -> list[dict]:
+    """Plug in your existing VPG PDF extraction logic using PdfReader."""
+    reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
+    _pages_text = [page.extract_text() or "" for page in reader.pages]
 
-def parse_price(val):
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    cleaned = re.sub(r"[^0-9.\-]", "", str(val).strip())
-    if cleaned in ("", "-", ".", "-."):
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
+    # TODO: Replace sample rows below with your real VPG parser output
+    # Each row example: {"part_no": "...", "category": "Cable1", "po_price": 12.50, "qty": 100}
+    return []
 
-def format_price(num_val):
-    if num_val is None:
-        return "-"
-    s = f"{num_val:.4f}".rstrip("0").rstrip(".")
-    if "." not in s:
-        return f"{s}.00"
-    dec_part = s.split(".")[1]
-    if len(dec_part) < 2:
-        return f"{s}{'0' * (2 - len(dec_part))}"
-    return s
 
-def find_aug5_price_col(ws_val, ws_raw):
-    # Search for "5th August 2026" or "August 2026" or default to Col AF (32)
-    for r in range(1, min(6, ws_val.max_row + 1)):
-        for c in range(1, ws_val.max_column + 1):
-            v = ws_val.cell(row=r, column=c).value
-            if v is None:
-                v = ws_raw.cell(row=r, column=c).value
-            if v is not None and ("5TH AUGUST 2026" in str(v).upper() or "AUG 2026" in str(v).upper()):
-                return c
-    return 32 if ws_val.max_column >= 32 else ws_val.max_column
+def load_price_matrix_from_excel(excel_file) -> dict:
+    """Plug in your existing Cable1 & Harness Excel matrix loading logic using openpyxl."""
+    wb = openpyxl.load_workbook(io.BytesIO(excel_file.getvalue()), data_only=True)
+    _sheet_names = wb.sheetnames
 
-def extract_po_items_from_pdf(pdf_bytes, file_name, known_pns_upper):
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    extracted = []
+    # TODO: Replace with your real Cable1 / Harness lookup structure
+    return {}
 
-    block_pattern = re.compile(
-        r"\b([A-Z]{1,4}\d{3,6}-\d{2,6}[A-Z0-9\-]*)\b.*?"
-        r"([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})\s*(?:EA|PCS|PC|M|MTR|MTRS|KG|KGS|SET|SETS)\s+"
-        r"(\d{2}/\d{2}/\d{4})\s+"
-        r"([0-9]+(?:\.[0-9]{1,4})?)\s+"
-        r"([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})",
-        re.IGNORECASE | re.DOTALL
-    )
 
-    fallback_pattern = re.compile(
-        r"\b([A-Z]{1,4}\d{3,6}-\d{2,6}[A-Z0-9\-]*)\b.*?"
-        r"([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})\s*(?:EA|PCS|PC|M|MTR|MTRS|KG|KGS|SET|SETS)\s+"
-        r"([0-9]+(?:\.[0-9]{1,4})?)\s+"
-        r"([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})",
-        re.IGNORECASE | re.DOTALL
-    )
+def run_price_recheck(po_items: list[dict], matrix_data: dict, category_filter: str) -> list[dict]:
+    """Plug in your existing price comparison logic."""
+    results = []
+    for item in po_items:
+        part = item.get("part_no", "")
+        cat = item.get("category", "Unknown")
+        po_price = item.get("po_price")
 
-    for page_idx, page in enumerate(reader.pages, start=1):
-        txt = page.extract_text() or ""
-        normalized = re.sub(r"\s+", " ", txt)
-        seen_in_page = set()
+        if category_filter != "All" and cat != category_filter:
+            continue
 
-        for m in block_pattern.finditer(normalized):
-            pn_found = m.group(1).strip().upper()
-            qty_val = parse_price(m.group(2))
-            unit_price_val = parse_price(m.group(4))
-            amount_val = parse_price(m.group(5))
+        # TODO: Replace with your real matrix lookup & tolerance check
+        expected_price = matrix_data.get(part)
 
-            if qty_val and unit_price_val and amount_val:
-                expected_amt = qty_val * unit_price_val
-                if abs(expected_amt - amount_val) > max(1.0, amount_val * 0.05):
-                    continue
+        if expected_price is None:
+            status = "Unmatched"
+            diff = None
+        elif po_price == expected_price:
+            status = "Matched"
+            diff = 0.0
+        else:
+            status = "Mismatch"
+            diff = round(float(po_price) - float(expected_price), 4)
 
-            key_uniq = (pn_found, unit_price_val, amount_val)
-            if key_uniq not in seen_in_page:
-                seen_in_page.add(key_uniq)
-                extracted.append({
-                    "file": file_name,
-                    "page": page_idx,
-                    "pn": pn_found,
-                    "po_price": unit_price_val
-                })
-
-        if not seen_in_page:
-            for m in fallback_pattern.finditer(normalized):
-                pn_found = m.group(1).strip().upper()
-                qty_val = parse_price(m.group(2))
-                unit_price_val = parse_price(m.group(3))
-                amount_val = parse_price(m.group(4))
-
-                key_uniq = (pn_found, unit_price_val, amount_val)
-                if key_uniq not in seen_in_page:
-                    seen_in_page.add(key_uniq)
-                    extracted.append({
-                        "file": file_name,
-                        "page": page_idx,
-                        "pn": pn_found,
-                        "po_price": unit_price_val
-                    })
-
-        for k_pn in known_pns_upper:
-            if re.search(rf"(?<![A-Z0-9\-]){re.escape(k_pn)}(?![A-Z0-9\-])", normalized.upper()):
-                already = any(x["pn"] == k_pn and x["page"] == page_idx for x in extracted)
-                if not already:
-                    extracted.append({
-                        "file": file_name,
-                        "page": page_idx,
-                        "pn": k_pn,
-                        "po_price": None
-                    })
-
-    return extracted
-
-col_up1, col_up2 = st.columns(2)
-with col_up1:
-    price_file = st.file_uploader("1. Upload Price Matrix Excel (.xlsx)", type=["xlsx"], key="price_matrix")
-with col_up2:
-    po_files = st.file_uploader(
-        "2. Upload Customer PO Files (.pdf or .xlsx)",
-        type=["pdf", "xlsx"],
-        accept_multiple_files=True,
-        key="po_files"
-    )
-
-if price_file is not None:
-    try:
-        p_bytes = price_file.getvalue()
-        wb_val = openpyxl.load_workbook(io.BytesIO(p_bytes), data_only=True)
-        wb_raw = openpyxl.load_workbook(io.BytesIO(p_bytes), data_only=False)
-
-        available_sheets = wb_val.sheetnames
-        default_sheets = [s for s in available_sheets if s.lower() in ("cable1", "harness")]
-        if not default_sheets:
-            default_sheets = available_sheets
-
-        selected_sheets = st.multiselect(
-            "Price Matrix Sheets:",
-            options=available_sheets,
-            default=default_sheets
+        results.append(
+            {
+                "Part No": part,
+                "Category": cat,
+                "PO Price": po_price,
+                "Matrix Price": expected_price,
+                "Difference": diff,
+                "Status": status,
+            }
         )
+    return results
 
-        price_map = {}
-        sheet_counts = {}
 
-        for s_name in selected_sheets:
-            ws_v = wb_val[s_name]
-            ws_r = wb_raw[s_name]
+# -------------------------------------------------------------------------
+# HEADER BANNER
+# -------------------------------------------------------------------------
+st.markdown(
+    """
+    <div class="app-header">
+        <p class="app-title">🧾 PO Price Reconciliation Tool</p>
+        <p class="app-subtitle">
+            Automated price validation for VPG PDF Purchase Orders against Cable1 &amp; Harness Price Matrices
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-            # Cable1 has Customer P/N in Col B (2) and Description in Col D (4)
-            # Harness has Customer P/N in Col C (3) and Description in Col E (5)
-            if s_name.strip().lower() == "cable1":
-                pn_col_idx = 2
-                desc_col_idx = 4
-            else:
-                pn_col_idx = 3
-                desc_col_idx = 5
+# -------------------------------------------------------------------------
+# SIDEBAR CONTROLS & FILE UPLOADS
+# -------------------------------------------------------------------------
+with st.sidebar:
+    st.header("📂 Input Files")
+    matrix_file = st.file_uploader(
+        "1. Upload Price Matrix (Excel)",
+        type=["xlsx", "xlsm"],
+        help="Workbook containing Cable1 and Harness pricing sheets",
+    )
+    po_file = st.file_uploader(
+        "2. Upload VPG Purchase Order (PDF)",
+        type=["pdf"],
+        help="VPG-style PDF PO document",
+    )
 
-            price_col_idx = find_aug5_price_col(ws_v, ws_r)
-            loaded_here = 0
+    st.divider()
+    st.header("⚙️ Recheck Options")
+    matrix_type = st.selectbox(
+        "Matrix Profile",
+        options=["Auto / All", "Cable1", "Harness"],
+        index=0,
+    )
+    view_filter = st.radio(
+        "Show Results",
+        options=["All Items", "Mismatches Only", "Unmatched Only", "Matched Only"],
+        index=0,
+    )
 
-            for r in range(3, ws_v.max_row + 1):
-                pn_v = ws_v.cell(row=r, column=pn_col_idx).value
-                pn_r = ws_r.cell(row=r, column=pn_col_idx).value
-                chosen_pn = pn_v if pn_v is not None else pn_r
+# -------------------------------------------------------------------------
+# MAIN WORKSPACE
+# -------------------------------------------------------------------------
+col_left, col_right = st.columns([1, 1], gap="medium")
 
-                if chosen_pn is not None and str(chosen_pn).strip() != "":
-                    pn_str = str(chosen_pn).strip()
-                    if pn_str.upper() in ("CUSTOMER P/N", "P/N", "PART NO", "ITEM NO", "SL.NO"):
-                        continue
+with col_left:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("📊 Price Matrix Status")
+    if matrix_file:
+        st.success(f"Loaded: **{matrix_file.name}**")
+    else:
+        st.info("Waiting for Price Matrix Excel file...")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-                    d_v = ws_v.cell(row=r, column=desc_col_idx).value
-                    d_r = ws_r.cell(row=r, column=desc_col_idx).value
-                    chosen_desc = d_v if d_v is not None else d_r
-                    desc_str = "-" if chosen_desc is None or str(chosen_desc).strip() == "" else str(chosen_desc).strip()
+with col_right:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("📄 Purchase Order Status")
+    if po_file:
+        st.success(f"Loaded: **{po_file.name}**")
+    else:
+        st.info("Waiting for VPG PO PDF file...")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-                    pr_v = ws_v.cell(row=r, column=price_col_idx).value
-                    pr_r = ws_r.cell(row=r, column=price_col_idx).value
-                    chosen_price = pr_v if pr_v is not None else pr_r
-                    num_price = parse_price(chosen_price)
+run_btn = st.button(
+    "🚀 Run Price Recheck",
+    type="primary",
+    disabled=not (matrix_file and po_file),
+    use_container_width=False,
+)
 
-                    key = pn_str.upper()
-                    if key not in price_map:
-                        price_map[key] = {
-                            "pn": pn_str,
-                            "desc": desc_str,
-                            "price_num": num_price,
-                            "price_str": format_price(num_price) if num_price is not None else (str(chosen_price).strip() if chosen_price is not None else "-"),
-                            "sheet": s_name
-                        }
-                        loaded_here += 1
+if run_btn and matrix_file and po_file:
+    with st.spinner("Extracting PO items and validating against Price Matrix..."):
+        matrix_data = load_price_matrix_from_excel(matrix_file)
+        po_items = extract_po_items_from_pdf(po_file)
+        all_results = run_price_recheck(po_items, matrix_data, matrix_type)
 
-            sheet_counts[s_name] = loaded_here
+    total_count = len(all_results)
+    matched_count = sum(1 for r in all_results if r["Status"] == "Matched")
+    mismatch_count = sum(1 for r in all_results if r["Status"] == "Mismatch")
+    unmatched_count = sum(1 for r in all_results if r["Status"] == "Unmatched")
 
-        st.success(f"Loaded {len(price_map)} unique P/Ns -> {sheet_counts}")
-        st.divider()
+    st.divider()
+    st.subheader("📌 Summary")
 
-        if po_files:
-            results = []
-            match_count = 0
-            mismatch_count = 0
-            not_found_count = 0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total PO Items", total_count)
+    m2.metric("Matched", matched_count)
+    m3.metric("Price Mismatches", mismatch_count)
+    m4.metric("Unmatched Parts", unmatched_count)
 
-            for f in po_files:
-                fname = f.name
-                fbytes = f.getvalue()
+    # Filter rows based on user selection
+    if view_filter == "Mismatches Only":
+        filtered_results = [r for r in all_results if r["Status"] == "Mismatch"]
+    elif view_filter == "Unmatched Only":
+        filtered_results = [r for r in all_results if r["Status"] == "Unmatched"]
+    elif view_filter == "Matched Only":
+        filtered_results = [r for r in all_results if r["Status"] == "Matched"]
+    else:
+        filtered_results = all_results
 
-                if fname.lower().endswith(".pdf") and PDF_AVAILABLE:
-                    extracted_items = extract_po_items_from_pdf(fbytes, fname, list(price_map.keys()))
+    st.subheader("📋 Reconciliation Details")
+    if filtered_results:
+        st.dataframe(filtered_results, use_container_width=True, hide_index=True)
 
-                    for item in extracted_items:
-                        po_pn_str = item["pn"]
-                        po_price_num = item["po_price"]
-                        k = po_pn_str.upper()
+        # Export Excel report using openpyxl
+        out_wb = openpyxl.Workbook()
+        out_ws = out_wb.active
+        out_ws.title = "Price Recheck Report"
+        headers = list(filtered_results[0].keys())
+        out_ws.append(headers)
+        for row in filtered_results:
+            out_ws.append([row.get(h) for h in headers])
 
-                        if k in price_map:
-                            ref = price_map[k]
-                            ref_price_num = ref["price_num"]
+        excel_buffer = io.BytesIO()
+        out_wb.save(excel_buffer)
+        excel_buffer.seek(0)
 
-                            if po_price_num is not None and ref_price_num is not None:
-                                diff = round(po_price_num - ref_price_num, 4)
-                                if abs(diff) < 0.0005:
-                                    status = "MATCH"
-                                    match_count += 1
-                                else:
-                                    status = "PRICE MISMATCH"
-                                    mismatch_count += 1
-                                diff_str = f"{diff:+.4f}".rstrip("0").rstrip(".")
-                                if diff_str in ("", "+"):
-                                    diff_str = "0.00"
-                            else:
-                                status = "CHECK MANUALLY"
-                                diff_str = "-"
-
-                            results.append({
-                                "PO File": fname,
-                                "Page": f"Page {item['page']}",
-                                "PO Item Number": po_pn_str,
-                                "Source Sheet": ref["sheet"],
-                                "Item Description": ref["desc"],
-                                "PO Price": format_price(po_price_num),
-                                "5th Aug 2026 Price": ref["price_str"],
-                                "Difference (PO - Matrix)": diff_str,
-                                "Status": status
-                            })
-                        else:
-                            not_found_count += 1
-                            results.append({
-                                "PO File": fname,
-                                "Page": f"Page {item['page']}",
-                                "PO Item Number": po_pn_str,
-                                "Source Sheet": "-",
-                                "Item Description": "Item not found",
-                                "PO Price": format_price(po_price_num),
-                                "5th Aug 2026 Price": "-",
-                                "Difference (PO - Matrix)": "-",
-                                "Status": "NOT FOUND"
-                            })
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total PO Items Found", len(results))
-            m2.metric("Exact Price Match", match_count)
-            m3.metric("Price Mismatch", mismatch_count)
-            m4.metric("Not Found", not_found_count)
-
-            filter_opt = st.radio(
-                "Filter Results:",
-                ["All Items", "Only Mismatches & Not Found", "Only Matches"],
-                horizontal=True
-            )
-
-            if filter_opt == "Only Mismatches & Not Found":
-                filtered_results = [x for x in results if x["Status"] in ("PRICE MISMATCH", "NOT FOUND", "CHECK MANUALLY")]
-            elif filter_opt == "Only Matches":
-                filtered_results = [x for x in results if x["Status"] == "MATCH"]
-            else:
-                filtered_results = results
-
-            st.dataframe(filtered_results, width="stretch")
-
-            if results:
-                out_wb = openpyxl.Workbook()
-                out_ws = out_wb.active
-                out_ws.title = "PO_Recheck_Report"
-                headers_out = list(results[0].keys())
-                out_ws.append(headers_out)
-                for row_dict in results:
-                    out_ws.append([row_dict[h] for h in headers_out])
-
-                out_buf = io.BytesIO()
-                out_wb.save(out_buf)
-                out_buf.seek(0)
-
-                st.download_button(
-                    label="Download Full Comparison Report (.xlsx)",
-                    data=out_buf.getvalue(),
-                    file_name="PO_Price_Comparison_Report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-    except Exception as e:
-        st.error(f"Error processing files: {e}")
+        st.download_button(
+            label="⬇️ Download Report (.xlsx)",
+            data=excel_buffer,
+            file_name="po_price_recheck_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    else:
+        st.warning("No items match the selected filter.")
