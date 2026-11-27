@@ -1,235 +1,227 @@
 import io
+import re
 import streamlit as st
 import openpyxl
 from pypdf import PdfReader
+from PIL import Image, ImageDraw, ImageFont
 
-# 1. Page Configuration
+# -------------------------------------------------------------------------
+# 1. PAGE CONFIG
+# -------------------------------------------------------------------------
 st.set_page_config(
-    page_title="PO Price Recheck Tool",
-    page_icon="🧾",
+    page_title="VPG PO Price Recheck Studio",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# 2. Clean & Subtle Custom CSS (Works smoothly in Light & Dark modes)
+# -------------------------------------------------------------------------
+# 2. CLEAN WHITE-OUTPUT & MODERN UI STYLING
+# -------------------------------------------------------------------------
 st.markdown(
     """
     <style>
-        .app-header {
-            padding: 1.1rem 1.4rem;
+        .stApp {
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #ffffff;
+            border-right: 1px solid #e2e8f0;
+        }
+        .upload-card {
+            background-color: #ffffff;
+            border: 1px solid #cbd5e1;
             border-radius: 12px;
-            border: 1px solid rgba(128, 128, 128, 0.22);
-            background: rgba(128, 128, 128, 0.05);
-            margin-bottom: 1.2rem;
+            padding: 16px 18px;
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+            margin-bottom: 12px;
+            color: #0f172a;
         }
-        .app-title {
-            font-size: 1.65rem;
-            font-weight: 700;
-            margin: 0;
-            line-height: 1.25;
-        }
-        .app-subtitle {
-            font-size: 0.95rem;
-            opacity: 0.8;
-            margin-top: 0.35rem;
-            margin-bottom: 0;
-        }
-        .section-card {
-            padding: 1rem 1.15rem;
+        .result-paper {
+            background-color: #ffffff;
+            color: #000000;
+            border: 1px solid #000000;
             border-radius: 10px;
-            border: 1px solid rgba(128, 128, 128, 0.2);
-            margin-bottom: 0.9rem;
+            padding: 18px 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+        }
+        .result-paper h3, .result-paper p, .result-paper span, .result-paper div {
+            color: #000000 !important;
+        }
+        div[data-testid="stDataFrame"] > div {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            border: 1px solid #000000 !important;
+            border-radius: 8px;
+        }
+        div[data-testid="stDataFrame"] * {
+            color: #000000 !important;
+            background-color: #ffffff !important;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+
 # -------------------------------------------------------------------------
-# EXISTING BACKEND LOGIC (Replace / connect your actual VPG & Matrix functions)
+# 3. AI-STYLE HEADER BANNER IMAGE GENERATOR (NO EXTERNAL ASSET NEEDED)
 # -------------------------------------------------------------------------
-def extract_po_items_from_pdf(pdf_file) -> list[dict]:
-    """Plug in your existing VPG PDF extraction logic using PdfReader."""
-    reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
-    _pages_text = [page.extract_text() or "" for page in reader.pages]
+@st.cache_data
+def generate_header_banner() -> Image.Image:
+    width, height = 1400, 210
+    img = Image.new("RGB", (width, height), color=(15, 23, 42))
+    draw = ImageDraw.Draw(img)
 
-    # TODO: Replace sample rows below with your real VPG parser output
-    # Each row example: {"part_no": "...", "category": "Cable1", "po_price": 12.50, "qty": 100}
-    return []
+    # Subtle gradient-like horizontal bands & geometric industrial/AI accents
+    for x in range(0, width, 4):
+        ratio = x / width
+        r = int(15 + ratio * 24)
+        g = int(23 + ratio * 56)
+        b = int(42 + ratio * 92)
+        draw.line([(x, 0), (x, height)], fill=(r, g, b), width=4)
+
+    # Decorative circuit / harness nodes on the right
+    nodes = [
+        (1080, 55), (1180, 55), (1280, 95),
+        (1130, 145), (1240, 155), (1330, 55),
+    ]
+    edges = [
+        (nodes[0], nodes[1]), (nodes[1], nodes[2]),
+        (nodes[0], nodes[3]), (nodes[3], nodes[4]),
+        (nodes[2], nodes[4]), (nodes[1], nodes[5]),
+    ]
+    for p1, p2 in edges:
+        draw.line([p1, p2], fill=(56, 189, 248), width=3)
+    for cx, cy in nodes:
+        draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=(125, 211, 252), outline=(255, 255, 255), width=2)
+
+    # Accent vertical bar
+    draw.rectangle((42, 42, 54, height - 42), fill=(56, 189, 248))
+
+    font_title = ImageFont.load_default()
+    draw.text((78, 56), "VPG PURCHASE ORDER — PRICE RECONCILIATION STUDIO", fill=(255, 255, 255), font=font_title)
+    draw.text((78, 96), "Cable1 & Harness Price Matrix Validation  |  Multi-PO Batch Engine", fill=(186, 230, 253), font=font_title)
+    draw.text((78, 134), "White-Sheet Black-Text Output  •  Instant Discrepancy & Excel Export", fill=(226, 232, 240), font=font_title)
+
+    return img
 
 
-def load_price_matrix_from_excel(excel_file) -> dict:
-    """Plug in your existing Cable1 & Harness Excel matrix loading logic using openpyxl."""
+# -------------------------------------------------------------------------
+# 4. EXCEL MATRIX LOADER & VPG PDF PARSER (PLUG YOUR EXACT RULES HERE)
+# -------------------------------------------------------------------------
+def load_price_matrix(excel_file, matrix_profile: str) -> dict:
+    """
+    Returns dict keyed by normalized item_number:
+    {
+        "PART-001": {"matrix_price": 12.50, "description": "Harness Assy ...", "sheet": "Harness"}
+    }
+    """
     wb = openpyxl.load_workbook(io.BytesIO(excel_file.getvalue()), data_only=True)
-    _sheet_names = wb.sheetnames
+    matrix_lookup = {}
 
-    # TODO: Replace with your real Cable1 / Harness lookup structure
-    return {}
+    target_sheets = wb.sheetnames
+    if matrix_profile in ("Cable1", "Harness"):
+        matched = [s for s in wb.sheetnames if matrix_profile.lower() in s.lower()]
+        if matched:
+            target_sheets = matched
+
+    for sheet_name in target_sheets:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or row[0] is None:
+                continue
+            item_no = str(row[0]).strip()
+            desc = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+            price_val = None
+            for cell in row[2:]:
+                if isinstance(cell, (int, float)):
+                    price_val = float(cell)
+                    break
+                if isinstance(cell, str):
+                    cleaned = re.sub(r"[^\d.]", "", cell)
+                    if cleaned:
+                        try:
+                            price_val = float(cleaned)
+                            break
+                        except ValueError:
+                            pass
+
+            if item_no and price_val is not None:
+                matrix_lookup[item_no.upper()] = {
+                    "matrix_price": price_val,
+                    "description": desc,
+                    "sheet": sheet_name,
+                }
+
+    return matrix_lookup
 
 
-def run_price_recheck(po_items: list[dict], matrix_data: dict, category_filter: str) -> list[dict]:
-    """Plug in your existing price comparison logic."""
-    results = []
-    for item in po_items:
-        part = item.get("part_no", "")
-        cat = item.get("category", "Unknown")
-        po_price = item.get("po_price")
+def extract_vpg_po_items(pdf_file) -> list[dict]:
+    """
+    Extracts PO line items from a single VPG PDF file.
+    Replace/extend pattern matching below with your exact VPG PDF layout rules.
+    """
+    reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
+    full_text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-        if category_filter != "All" and cat != category_filter:
+    items = []
+    # Pattern example: Item Number, Description, Unit Price
+    line_pattern = re.compile(
+        r"([A-Z0-9][A-Z0-9\-_/]{2,24})\s+(.+?)\s+\$?\s*(\d+(?:\.\d{1,4})?)\s*$",
+        re.MULTILINE,
+    )
+    for match in line_pattern.finditer(full_text):
+        item_no = match.group(1).strip().upper()
+        desc = " ".join(match.group(2).split()).strip()
+        po_price = float(match.group(3))
+        if item_no.lower() in {"page", "total", "subtotal", "date", "vpg"}:
             continue
-
-        # TODO: Replace with your real matrix lookup & tolerance check
-        expected_price = matrix_data.get(part)
-
-        if expected_price is None:
-            status = "Unmatched"
-            diff = None
-        elif po_price == expected_price:
-            status = "Matched"
-            diff = 0.0
-        else:
-            status = "Mismatch"
-            diff = round(float(po_price) - float(expected_price), 4)
-
-        results.append(
+        items.append(
             {
-                "Part No": part,
-                "Category": cat,
+                "PO File": pdf_file.name,
+                "Item Number": item_no,
+                "Item Description": desc,
                 "PO Price": po_price,
-                "Matrix Price": expected_price,
-                "Difference": diff,
+            }
+        )
+
+    return items
+
+
+def reconcile_items(po_items: list[dict], matrix_lookup: dict) -> list[dict]:
+    rows = []
+    for item in po_items:
+        item_no = item["Item Number"].upper()
+        po_price = item["PO Price"]
+        pdf_desc = item.get("Item Description", "")
+
+        m_entry = matrix_lookup.get(item_no)
+        if m_entry is not None:
+            matrix_price = m_entry["matrix_price"]
+            final_desc = m_entry["description"] or pdf_desc
+            diff = round(po_price - matrix_price, 4)
+            status = "MATCHED" if abs(diff) < 1e-6 else "MISMATCH"
+        else:
+            matrix_price = None
+            final_desc = pdf_desc
+            diff = None
+            status = "NOT IN MATRIX"
+
+        rows.append(
+            {
+                "PO File": item["PO File"],
+                "Item Number": item_no,
+                "Item Description": final_desc,
+                "Matrix Price": matrix_price,
+                "PO Price": po_price,
+                "Price Difference": diff,
                 "Status": status,
             }
         )
-    return results
+    return rows
 
 
 # -------------------------------------------------------------------------
-# HEADER BANNER
-# -------------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="app-header">
-        <p class="app-title">🧾 PO Price Reconciliation Tool</p>
-        <p class="app-subtitle">
-            Automated price validation for VPG PDF Purchase Orders against Cable1 &amp; Harness Price Matrices
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -------------------------------------------------------------------------
-# SIDEBAR CONTROLS & FILE UPLOADS
-# -------------------------------------------------------------------------
-with st.sidebar:
-    st.header("📂 Input Files")
-    matrix_file = st.file_uploader(
-        "1. Upload Price Matrix (Excel)",
-        type=["xlsx", "xlsm"],
-        help="Workbook containing Cable1 and Harness pricing sheets",
-    )
-    po_file = st.file_uploader(
-        "2. Upload VPG Purchase Order (PDF)",
-        type=["pdf"],
-        help="VPG-style PDF PO document",
-    )
-
-    st.divider()
-    st.header("⚙️ Recheck Options")
-    matrix_type = st.selectbox(
-        "Matrix Profile",
-        options=["Auto / All", "Cable1", "Harness"],
-        index=0,
-    )
-    view_filter = st.radio(
-        "Show Results",
-        options=["All Items", "Mismatches Only", "Unmatched Only", "Matched Only"],
-        index=0,
-    )
-
-# -------------------------------------------------------------------------
-# MAIN WORKSPACE
-# -------------------------------------------------------------------------
-col_left, col_right = st.columns([1, 1], gap="medium")
-
-with col_left:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("📊 Price Matrix Status")
-    if matrix_file:
-        st.success(f"Loaded: **{matrix_file.name}**")
-    else:
-        st.info("Waiting for Price Matrix Excel file...")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with col_right:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("📄 Purchase Order Status")
-    if po_file:
-        st.success(f"Loaded: **{po_file.name}**")
-    else:
-        st.info("Waiting for VPG PO PDF file...")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-run_btn = st.button(
-    "🚀 Run Price Recheck",
-    type="primary",
-    disabled=not (matrix_file and po_file),
-    use_container_width=False,
-)
-
-if run_btn and matrix_file and po_file:
-    with st.spinner("Extracting PO items and validating against Price Matrix..."):
-        matrix_data = load_price_matrix_from_excel(matrix_file)
-        po_items = extract_po_items_from_pdf(po_file)
-        all_results = run_price_recheck(po_items, matrix_data, matrix_type)
-
-    total_count = len(all_results)
-    matched_count = sum(1 for r in all_results if r["Status"] == "Matched")
-    mismatch_count = sum(1 for r in all_results if r["Status"] == "Mismatch")
-    unmatched_count = sum(1 for r in all_results if r["Status"] == "Unmatched")
-
-    st.divider()
-    st.subheader("📌 Summary")
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total PO Items", total_count)
-    m2.metric("Matched", matched_count)
-    m3.metric("Price Mismatches", mismatch_count)
-    m4.metric("Unmatched Parts", unmatched_count)
-
-    # Filter rows based on user selection
-    if view_filter == "Mismatches Only":
-        filtered_results = [r for r in all_results if r["Status"] == "Mismatch"]
-    elif view_filter == "Unmatched Only":
-        filtered_results = [r for r in all_results if r["Status"] == "Unmatched"]
-    elif view_filter == "Matched Only":
-        filtered_results = [r for r in all_results if r["Status"] == "Matched"]
-    else:
-        filtered_results = all_results
-
-    st.subheader("📋 Reconciliation Details")
-    if filtered_results:
-        st.dataframe(filtered_results, use_container_width=True, hide_index=True)
-
-        # Export Excel report using openpyxl
-        out_wb = openpyxl.Workbook()
-        out_ws = out_wb.active
-        out_ws.title = "Price Recheck Report"
-        headers = list(filtered_results[0].keys())
-        out_ws.append(headers)
-        for row in filtered_results:
-            out_ws.append([row.get(h) for h in headers])
-
-        excel_buffer = io.BytesIO()
-        out_wb.save(excel_buffer)
-        excel_buffer.seek(0)
-
-        st.download_button(
-            label="⬇️ Download Report (.xlsx)",
-            data=excel_buffer,
-            file_name="po_price_recheck_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        st.warning("No items match the selected filter.")
+# 5. HEADER BANNER & SIDE
