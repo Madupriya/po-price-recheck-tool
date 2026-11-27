@@ -10,7 +10,48 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+def _get_allowed_passwords() -> list[str]:
+    raw = str(st.secrets.get("ACTIVE_PASSWORDS", "")).strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
+
+def check_daily_login() -> bool:
+    allowed = _get_allowed_passwords()
+    if not allowed:
+        return True
+
+    # If already logged in with a currently active password, keep session active
+    if st.session_state.get("authenticated") and st.session_state.get("active_pw") in allowed:
+        return True
+
+    # If password was revoked while user was logged in, force re-login
+    if st.session_state.get("authenticated") and st.session_state.get("active_pw") not in allowed:
+        st.session_state["authenticated"] = False
+        st.session_state["active_pw"] = None
+        st.warning("Your access password has expired or changed. Please enter today's password.")
+
+    st.markdown("### 🔐 Team Daily / Login Access")
+    st.caption("Enter the password issued for today / this login session.")
+
+    with st.form("daily_login_form", clear_on_submit=True):
+        entered_pw = st.text_input("Access Password", type="password")
+        submitted = st.form_submit_button("Login", type="primary")
+
+    if submitted:
+        if entered_pw.strip() in allowed:
+            st.session_state["authenticated"] = True
+            st.session_state["active_pw"] = entered_pw.strip()
+            st.rerun()
+        else:
+            st.error("Invalid or expired password.")
+
+    return False
+
+
+if not check_daily_login():
+    st.stop()
 st.markdown(
     """
     <style>
