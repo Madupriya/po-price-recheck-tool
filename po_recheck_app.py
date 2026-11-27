@@ -11,7 +11,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Light, clean styling without breaking Streamlit's internal DOM
 st.markdown(
     """
     <style>
@@ -57,40 +56,96 @@ st.markdown(
 )
 
 
-def load_price_matrix(excel_file, matrix_profile: str) -> dict:
+def _find_header_and_cols(ws) -> tuple[int, dict]:
+    """Finds header row and maps Customer P/N, Item Description, and Price columns."""
+    for r in range(1, min(10, ws.max_row + 1)):
+        row_map = {}
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(r, c).value
+            if val is not None:
+                row_map[str(val).strip().lower()] = c
+        if "customer p/n" in row_map:
+            return r, row_map
+    return 2, {}
+
+
+def _pick_price_column(row_map: dict, price_mode: str) -> int | None:
+    preferred_lists = {
+        "Current Selling Price / Agreed Price": [
+            "current selling price",
+            "agreed price 2024",
+            "current sales price usd/m",
+            "new price july 2026 $/m",
+            "suggested sales price validity sept/oct 2026",
+            "suggested sales price for 2026/27",
+        ],
+        "Suggested Sales Price (Sept/Oct 2026)": [
+            "suggested sales price validity sept/oct 2026",
+            "new price july 2026 $/m",
+            "suggested sales price for 2026/27",
+            "current selling price",
+            "agreed price 2024",
+        ],
+        "Suggested Sales Price (2026/27)": [
+            "suggested sales price for 2026/27",
+            "new price july 2026 $/m",
+            "suggested sales price validity sept/oct 2026",
+            "current selling price",
+            "agreed price 2024",
+        ],
+    }
+    candidates = preferred_lists.get(price_mode, preferred_lists["Current Selling Price / Agreed Price"])
+    for key in candidates:
+        if key in row_map:
+            return row_map[key]
+    return None
+
+
+def load_price_matrix(excel_file, matrix_profile: str, price_mode: str) -> dict:
     wb = openpyxl.load_workbook(io.BytesIO(excel_file.getvalue()), data_only=True)
     matrix_lookup = {}
 
-    target_sheets = wb.sheetnames
+    target_sheets = [s for s in wb.sheetnames if s.lower() != "main sheet"]
     if matrix_profile in ("Cable1", "Harness"):
-        matched = [s for s in wb.sheetnames if matrix_profile.lower() in s.lower()]
+        matched = [s for s in target_sheets if matrix_profile.lower() in s.lower()]
         if matched:
             target_sheets = matched
 
     for sheet_name in target_sheets:
         ws = wb[sheet_name]
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not row or row[0] is None:
-                continue
-            item_no = str(row[0]).strip()
-            desc = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-            price_val = None
-            for cell in row[2:]:
-                if isinstance(cell, (int, float)):
-                    price_val = float(cell)
-                    break
-                if isinstance(cell, str):
-                    cleaned = re.sub(r"[^\d.]", "", cell)
-                    if cleaned:
-                        try:
-                            price_val = float(cleaned)
-                            break
-                        except ValueError:
-                            pass
+        header_row, row_map = _find_header_and_cols(ws)
+        pn_col = row_map.get("customer p/n")
+        desc_col = row_map.get("item description")
+        price_col = _pick_price_column(row_map, price_mode)
 
-            if item_no and price_val is not None:
-                matrix_lookup[item_no.upper()] = {
-                    "matrix_price": price_val,
+        if not pn_col or not price_col:
+            continue
+
+        for r in range(header_row + 1, ws.max_row + 1):
+            pn_val = ws.cell(r, pn_col).value
+            price_val = ws.cell(r, price_col).value
+            if pn_val is None or price_val is None:
+                continue
+
+            item_no = str(pn_val).strip().upper()
+            if not re.match(r"^[A-Z0-9]+-[A-Z0-9\-]+$", item_no):
+                continue
+
+            try:
+                m_price = float(str(price_val).replace(",", "").strip())
+            except ValueError:
+                continue
+
+            desc = ""
+            if desc_col and ws.cell(r, desc_col).value is not None:
+                desc = " ".join(str(ws.cell(r, desc_col).value).split()).strip()
+
+            # Prefer matching sheet if profile selected; otherwise keep first or Harness/Cable1 entry
+            if item_no not in matrix_lookup or (
+                matrix_profile != "Auto (All Sheets)" and matrix_profile.lower() in sheet_name.lower()
+            ):
+                matrix_lookup[item_no] = {
+                    "matrix_price": m_price,
                     "description": desc,
                     "sheet": sheet_name,
                 }
@@ -100,29 +155,61 @@ def load_price_matrix(excel_file, matrix_profile: str) -> dict:
 
 def extract_vpg_po_items(pdf_file) -> list[dict]:
     reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
-    full_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    extracted = []
 
-    items = []
+    # Matches lines like:
+    # 1 S2700-0029 CBL 0.210 (50128&55065) R 3,000.00 EA 25/09/2026 3.017 9,051.00
     line_pattern = re.compile(
-        r"([A-Z0-9][A-Z0-9\-_/]{2,24})\s+(.+?)\s+\$?\s*(\d+(?:\.\d{1,4})?)\s*$",
-        re.MULTILINE,
+        r"^\s*(\d+)\s+([A-Z]\d{3,4}-\d{3,5})\s+(.+?)\s+([A-Z0-9]{1,3})\s+([\d,]+(?:\.\d+)?)\s+(EA|M|KG|PC|PCS|MTR|MTRS)\s+(\d{2}/\d{2}/\d{4})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*$"
     )
-    for match in line_pattern.finditer(full_text):
-        item_no = match.group(1).strip().upper()
-        desc = " ".join(match.group(2).split()).strip()
-        po_price = float(match.group(3))
-        if item_no.lower() in {"page", "total", "subtotal", "date", "vpg"}:
-            continue
-        items.append(
-            {
-                "PO File": pdf_file.name,
-                "Item Number": item_no,
-                "Item Description": desc,
-                "PO Price": po_price,
-            }
-        )
+    stop_tokens = (
+        "Inco Terms",
+        "Total Amount",
+        "Bill To",
+        "Ship To",
+        "Page ",
+        "Vendor",
+        "Forwarder",
+        "GSTIN",
+        "Phone",
+        "Discount",
+        "VAT",
+    )
 
-    return items
+    for page in reader.pages:
+        txt = page.extract_text() or ""
+        lines = txt.splitlines()
+        i = 0
+        while i < len(lines):
+            clean_line = " ".join(lines[i].split())
+            m = line_pattern.match(clean_line)
+            if m:
+                item_no = m.group(2).strip().upper()
+                desc_parts = [" ".join(m.group(3).split()).strip()]
+                po_price = float(m.group(8).replace(",", ""))
+
+                # Capture optional next line if it continues the item description
+                if i + 1 < len(lines):
+                    nxt = " ".join(lines[i + 1].split()).strip()
+                    if (
+                        nxt
+                        and not line_pattern.match(nxt)
+                        and not any(tok.lower() in nxt.lower() for tok in stop_tokens)
+                    ):
+                        desc_parts.append(nxt)
+                        i += 1
+
+                extracted.append(
+                    {
+                        "PO File": pdf_file.name,
+                        "Item Number": item_no,
+                        "Item Description": " ".join(desc_parts).strip(),
+                        "PO Price": po_price,
+                    }
+                )
+            i += 1
+
+    return extracted
 
 
 def reconcile_items(po_items: list[dict], matrix_lookup: dict) -> list[dict]:
@@ -135,7 +222,7 @@ def reconcile_items(po_items: list[dict], matrix_lookup: dict) -> list[dict]:
         m_entry = matrix_lookup.get(item_no)
         if m_entry is not None:
             matrix_price = m_entry["matrix_price"]
-            final_desc = m_entry["description"] or pdf_desc
+            final_desc = pdf_desc or m_entry["description"]
             diff = round(po_price - matrix_price, 4)
             status = "MATCHED" if abs(diff) < 1e-6 else "MISMATCH"
         else:
@@ -148,10 +235,10 @@ def reconcile_items(po_items: list[dict], matrix_lookup: dict) -> list[dict]:
             {
                 "PO File": item["PO File"],
                 "Item Number": item_no,
-                "Item Description": final_desc,
                 "Matrix Price": matrix_price,
                 "PO Price": po_price,
                 "Price Difference": diff,
+                "Item Description": final_desc,
                 "Status": status,
             }
         )
@@ -185,6 +272,14 @@ with st.sidebar:
     st.divider()
     st.header("🎛️ Filter & View")
     matrix_profile = st.selectbox("Price Matrix Sheet", ["Auto (All Sheets)", "Cable1", "Harness"])
+    price_mode = st.selectbox(
+        "Matrix Price Column",
+        [
+            "Current Selling Price / Agreed Price",
+            "Suggested Sales Price (Sept/Oct 2026)",
+            "Suggested Sales Price (2026/27)",
+        ],
+    )
     status_filter = st.radio(
         "Display Rows",
         ["All Rows", "Mismatches Only", "Matched Only", "Not in Matrix"],
@@ -215,7 +310,7 @@ run_clicked = st.button(
 
 if run_clicked and matrix_file and po_files:
     with st.spinner("Validating POs against Price Matrix..."):
-        matrix_data = load_price_matrix(matrix_file, matrix_profile)
+        matrix_data = load_price_matrix(matrix_file, matrix_profile, price_mode)
         combined_po_items = []
         for pdf in po_files:
             combined_po_items.extend(extract_vpg_po_items(pdf))
@@ -236,30 +331,24 @@ if run_clicked and matrix_file and po_files:
     m3.metric("Price Mismatches", sum(1 for r in reconciled if r["Status"] == "MISMATCH"))
     m4.metric("Not in Matrix", sum(1 for r in reconciled if r["Status"] == "NOT IN MATRIX"))
 
-    output_table = [
-        {
-            "PO File": r["PO File"],
-            "Item Number": r["Item Number"],
-            "Matrix Price": r["Matrix Price"],
-            "PO Price": r["PO Price"],
-            "Price Difference": r["Price Difference"],
-            "Item Description": r["Item Description"],
-            "Status": r["Status"],
-        }
-        for r in display_rows
-    ]
-
     st.markdown('<div class="white-output-header">📋 Reconciliation Output</div>', unsafe_allow_html=True)
 
-    if output_table:
-        # Styled HTML table guarantees crisp white background + pure black text
-        headers = list(output_table[0].keys())
+    if display_rows:
+        headers = [
+            "PO File",
+            "Item Number",
+            "Matrix Price",
+            "PO Price",
+            "Price Difference",
+            "Item Description",
+            "Status",
+        ]
         th_html = "".join(
             f"<th style='border:1px solid #000000; padding:8px 10px; background:#f1f5f9; color:#000000; text-align:left;'>{h}</th>"
             for h in headers
         )
         body_rows = []
-        for row in output_table:
+        for row in display_rows:
             tds = "".join(
                 f"<td style='border:1px solid #000000; padding:7px 10px; background:#ffffff; color:#000000;'>{'' if row[h] is None else row[h]}</td>"
                 for h in headers
@@ -279,11 +368,11 @@ if run_clicked and matrix_file and po_files:
         combined_ws = out_wb.active
         combined_ws.title = "All_POs_Recheck"
         combined_ws.append(headers)
-        for r in output_table:
+        for r in display_rows:
             combined_ws.append([r[h] for h in headers])
 
         unique_pos = []
-        for r in output_table:
+        for r in display_rows:
             if r["PO File"] not in unique_pos:
                 unique_pos.append(r["PO File"])
 
@@ -293,7 +382,7 @@ if run_clicked and matrix_file and po_files:
                 safe_title = f"{safe_title[:24]}_{len(out_wb.sheetnames)}"
             ws_po = out_wb.create_sheet(title=safe_title)
             ws_po.append(headers)
-            for r in output_table:
+            for r in display_rows:
                 if r["PO File"] == po_name:
                     ws_po.append([r[h] for h in headers])
 
