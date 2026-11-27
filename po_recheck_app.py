@@ -10,6 +10,93 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+from datetime import datetime, timezone, timedelta
+import json
+import urllib.request
+
+SL_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def _load_users() -> dict[str, str]:
+    raw = str(st.secrets.get("USER_CREDENTIALS", "")).strip()
+    users = {}
+    if not raw:
+        return users
+    for pair in raw.split(","):
+        if ":" in pair:
+            uname, pwd = pair.split(":", 1)
+            uname = uname.strip().lower()
+            pwd = pwd.strip()
+            if uname and pwd:
+                users[uname] = pwd
+    return users
+
+
+def _notify_admin_login(username: str, event_type: str = "LOGIN") -> None:
+    now_str = datetime.now(SL_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    log_entry = {
+        "time": now_str,
+        "user": username,
+        "event": event_type,
+    }
+    logs = st.session_state.setdefault("activity_logs", [])
+    logs.append(log_entry)
+
+    webhook_url = str(st.secrets.get("ALERT_WEBHOOK_URL", "")).strip()
+    if webhook_url:
+        payload = json.dumps({
+            "text": f"[{event_type}] User '{username}' accessed VPG PO Recheck Tool at {now_str}"
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                webhook_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=4)
+        except Exception:
+            # Avoid breaking user session if webhook is unreachable
+            pass
+
+
+def check_user_login() -> bool:
+    users = _load_users()
+    if not users:
+        return True
+
+    current_user = st.session_state.get("logged_in_user")
+    if current_user and current_user in users:
+        return True
+
+    # If user's credential was removed or changed by admin, force re-login
+    if current_user and current_user not in users:
+        st.session_state.pop("logged_in_user", None)
+        st.warning("Your login credentials have been updated or revoked. Please log in again.")
+
+    st.markdown("### 🔐 Office User Login")
+    st.caption("Use the username and password assigned to you.")
+
+    with st.form("office_user_login_form", clear_on_submit=True):
+        uname_input = st.text_input("Username")
+        pwd_input = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login", type="primary")
+
+    if submitted:
+        u_clean = uname_input.strip().lower()
+        p_clean = pwd_input.strip()
+        if u_clean in users and users[u_clean] == p_clean:
+            st.session_state["logged_in_user"] = u_clean
+            _notify_admin_login(u_clean, event_type="LOGIN")
+            st.rerun()
+        else:
+            st.error("Invalid username or password. Access denied.")
+
+    return False
+
+
+if not check_user_login():
+    st.stop()
 def _get_allowed_passwords() -> list[str]:
     raw = str(st.secrets.get("ACTIVE_PASSWORDS", "")).strip()
     if not raw:
