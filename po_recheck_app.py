@@ -3,11 +3,7 @@ import re
 import streamlit as st
 import openpyxl
 from pypdf import PdfReader
-from PIL import Image, ImageDraw, ImageFont
 
-# -------------------------------------------------------------------------
-# 1. PAGE CONFIG
-# -------------------------------------------------------------------------
 st.set_page_config(
     page_title="VPG PO Price Recheck Studio",
     page_icon="⚡",
@@ -15,49 +11,45 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# -------------------------------------------------------------------------
-# 2. CLEAN WHITE-OUTPUT & MODERN UI STYLING
-# -------------------------------------------------------------------------
+# Light, clean styling without breaking Streamlit's internal DOM
 st.markdown(
     """
     <style>
-        .stApp {
-            background-color: #f8fafc;
-            color: #0f172a;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #ffffff;
-            border-right: 1px solid #e2e8f0;
-        }
-        .upload-card {
-            background-color: #ffffff;
-            border: 1px solid #cbd5e1;
+        .main-banner {
+            background: linear-gradient(90deg, #0f172a 0%, #1e3a8a 100%);
+            color: #ffffff;
+            padding: 20px 24px;
             border-radius: 12px;
-            padding: 16px 18px;
-            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
-            margin-bottom: 12px;
-            color: #0f172a;
+            margin-bottom: 18px;
+            border-left: 6px solid #38bdf8;
         }
-        .result-paper {
+        .main-banner h1 {
+            color: #ffffff;
+            font-size: 1.6rem;
+            margin: 0 0 6px 0;
+        }
+        .main-banner p {
+            color: #e2e8f0;
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        .info-box {
+            background-color: #ffffff;
+            color: #111827;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+        .white-output-header {
             background-color: #ffffff;
             color: #000000;
             border: 1px solid #000000;
-            border-radius: 10px;
-            padding: 18px 20px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-        }
-        .result-paper h3, .result-paper p, .result-paper span, .result-paper div {
-            color: #000000 !important;
-        }
-        div[data-testid="stDataFrame"] > div {
-            background-color: #ffffff !important;
-            color: #000000 !important;
-            border: 1px solid #000000 !important;
-            border-radius: 8px;
-        }
-        div[data-testid="stDataFrame"] * {
-            color: #000000 !important;
-            background-color: #ffffff !important;
+            border-bottom: none;
+            border-radius: 10px 10px 0 0;
+            padding: 12px 16px;
+            font-weight: 700;
+            font-size: 1.05rem;
         }
     </style>
     """,
@@ -65,59 +57,7 @@ st.markdown(
 )
 
 
-# -------------------------------------------------------------------------
-# 3. AI-STYLE HEADER BANNER IMAGE GENERATOR (NO EXTERNAL ASSET NEEDED)
-# -------------------------------------------------------------------------
-@st.cache_data
-def generate_header_banner() -> Image.Image:
-    width, height = 1400, 210
-    img = Image.new("RGB", (width, height), color=(15, 23, 42))
-    draw = ImageDraw.Draw(img)
-
-    # Subtle gradient-like horizontal bands & geometric industrial/AI accents
-    for x in range(0, width, 4):
-        ratio = x / width
-        r = int(15 + ratio * 24)
-        g = int(23 + ratio * 56)
-        b = int(42 + ratio * 92)
-        draw.line([(x, 0), (x, height)], fill=(r, g, b), width=4)
-
-    # Decorative circuit / harness nodes on the right
-    nodes = [
-        (1080, 55), (1180, 55), (1280, 95),
-        (1130, 145), (1240, 155), (1330, 55),
-    ]
-    edges = [
-        (nodes[0], nodes[1]), (nodes[1], nodes[2]),
-        (nodes[0], nodes[3]), (nodes[3], nodes[4]),
-        (nodes[2], nodes[4]), (nodes[1], nodes[5]),
-    ]
-    for p1, p2 in edges:
-        draw.line([p1, p2], fill=(56, 189, 248), width=3)
-    for cx, cy in nodes:
-        draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=(125, 211, 252), outline=(255, 255, 255), width=2)
-
-    # Accent vertical bar
-    draw.rectangle((42, 42, 54, height - 42), fill=(56, 189, 248))
-
-    font_title = ImageFont.load_default()
-    draw.text((78, 56), "VPG PURCHASE ORDER — PRICE RECONCILIATION STUDIO", fill=(255, 255, 255), font=font_title)
-    draw.text((78, 96), "Cable1 & Harness Price Matrix Validation  |  Multi-PO Batch Engine", fill=(186, 230, 253), font=font_title)
-    draw.text((78, 134), "White-Sheet Black-Text Output  •  Instant Discrepancy & Excel Export", fill=(226, 232, 240), font=font_title)
-
-    return img
-
-
-# -------------------------------------------------------------------------
-# 4. EXCEL MATRIX LOADER & VPG PDF PARSER (PLUG YOUR EXACT RULES HERE)
-# -------------------------------------------------------------------------
 def load_price_matrix(excel_file, matrix_profile: str) -> dict:
-    """
-    Returns dict keyed by normalized item_number:
-    {
-        "PART-001": {"matrix_price": 12.50, "description": "Harness Assy ...", "sheet": "Harness"}
-    }
-    """
     wb = openpyxl.load_workbook(io.BytesIO(excel_file.getvalue()), data_only=True)
     matrix_lookup = {}
 
@@ -159,15 +99,10 @@ def load_price_matrix(excel_file, matrix_profile: str) -> dict:
 
 
 def extract_vpg_po_items(pdf_file) -> list[dict]:
-    """
-    Extracts PO line items from a single VPG PDF file.
-    Replace/extend pattern matching below with your exact VPG PDF layout rules.
-    """
     reader = PdfReader(io.BytesIO(pdf_file.getvalue()))
     full_text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
     items = []
-    # Pattern example: Item Number, Description, Unit Price
     line_pattern = re.compile(
         r"([A-Z0-9][A-Z0-9\-_/]{2,24})\s+(.+?)\s+\$?\s*(\d+(?:\.\d{1,4})?)\s*$",
         re.MULTILINE,
@@ -223,5 +158,159 @@ def reconcile_items(po_items: list[dict], matrix_lookup: dict) -> list[dict]:
     return rows
 
 
-# -------------------------------------------------------------------------
-# 5. HEADER BANNER & SIDE
+# Banner
+st.markdown(
+    """
+    <div class="main-banner">
+        <h1>⚡ VPG Purchase Order — Price Reconciliation Studio</h1>
+        <p>Multi-PO Batch Validation against Cable1 &amp; Harness Price Matrices • Multi-Sheet Excel Export</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Sidebar
+with st.sidebar:
+    st.header("📁 Upload Inputs")
+    matrix_file = st.file_uploader(
+        "1. Price Matrix Workbook (.xlsx)",
+        type=["xlsx", "xlsm"],
+    )
+    po_files = st.file_uploader(
+        "2. Upload VPG Purchase Orders",
+        type=["pdf"],
+        accept_multiple_files=True,
+    )
+
+    st.divider()
+    st.header("🎛️ Filter & View")
+    matrix_profile = st.selectbox("Price Matrix Sheet", ["Auto (All Sheets)", "Cable1", "Harness"])
+    status_filter = st.radio(
+        "Display Rows",
+        ["All Rows", "Mismatches Only", "Matched Only", "Not in Matrix"],
+    )
+
+# Status cards
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown('<div class="info-box">', unsafe_allow_html=True)
+    st.markdown("**📊 Price Matrix Excel**")
+    st.write(matrix_file.name if matrix_file else "Not uploaded yet.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with col2:
+    st.markdown('<div class="info-box">', unsafe_allow_html=True)
+    st.markdown("**📄 VPG Purchase Orders (PDF)**")
+    if po_files:
+        st.write(f"{len(po_files)} file(s): " + ", ".join(f.name for f in po_files))
+    else:
+        st.write("Not uploaded yet.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+run_clicked = st.button(
+    "▶ Run Multi-PO Price Recheck",
+    type="primary",
+    disabled=not (matrix_file and po_files),
+)
+
+if run_clicked and matrix_file and po_files:
+    with st.spinner("Validating POs against Price Matrix..."):
+        matrix_data = load_price_matrix(matrix_file, matrix_profile)
+        combined_po_items = []
+        for pdf in po_files:
+            combined_po_items.extend(extract_vpg_po_items(pdf))
+        reconciled = reconcile_items(combined_po_items, matrix_data)
+
+    if status_filter == "Mismatches Only":
+        display_rows = [r for r in reconciled if r["Status"] == "MISMATCH"]
+    elif status_filter == "Matched Only":
+        display_rows = [r for r in reconciled if r["Status"] == "MATCHED"]
+    elif status_filter == "Not in Matrix":
+        display_rows = [r for r in reconciled if r["Status"] == "NOT IN MATRIX"]
+    else:
+        display_rows = reconciled
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Lines", len(reconciled))
+    m2.metric("Matched", sum(1 for r in reconciled if r["Status"] == "MATCHED"))
+    m3.metric("Price Mismatches", sum(1 for r in reconciled if r["Status"] == "MISMATCH"))
+    m4.metric("Not in Matrix", sum(1 for r in reconciled if r["Status"] == "NOT IN MATRIX"))
+
+    output_table = [
+        {
+            "PO File": r["PO File"],
+            "Item Number": r["Item Number"],
+            "Matrix Price": r["Matrix Price"],
+            "PO Price": r["PO Price"],
+            "Price Difference": r["Price Difference"],
+            "Item Description": r["Item Description"],
+            "Status": r["Status"],
+        }
+        for r in display_rows
+    ]
+
+    st.markdown('<div class="white-output-header">📋 Reconciliation Output</div>', unsafe_allow_html=True)
+
+    if output_table:
+        # Styled HTML table guarantees crisp white background + pure black text
+        headers = list(output_table[0].keys())
+        th_html = "".join(
+            f"<th style='border:1px solid #000000; padding:8px 10px; background:#f1f5f9; color:#000000; text-align:left;'>{h}</th>"
+            for h in headers
+        )
+        body_rows = []
+        for row in output_table:
+            tds = "".join(
+                f"<td style='border:1px solid #000000; padding:7px 10px; background:#ffffff; color:#000000;'>{'' if row[h] is None else row[h]}</td>"
+                for h in headers
+            )
+            body_rows.append(f"<tr>{tds}</tr>")
+
+        table_html = (
+            "<div style='overflow-x:auto; background:#ffffff; border:1px solid #000000; border-radius:0 0 10px 10px; padding:8px;'>"
+            "<table style='width:100%; border-collapse:collapse; background:#ffffff; color:#000000; font-size:0.9rem;'>"
+            f"<thead><tr>{th_html}</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody>"
+            "</table></div>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+
+        out_wb = openpyxl.Workbook()
+        combined_ws = out_wb.active
+        combined_ws.title = "All_POs_Recheck"
+        combined_ws.append(headers)
+        for r in output_table:
+            combined_ws.append([r[h] for h in headers])
+
+        unique_pos = []
+        for r in output_table:
+            if r["PO File"] not in unique_pos:
+                unique_pos.append(r["PO File"])
+
+        for po_name in unique_pos:
+            safe_title = re.sub(r"[\\/*?:\[\]]", "_", po_name)[:28] or "PO_Sheet"
+            if safe_title in out_wb.sheetnames:
+                safe_title = f"{safe_title[:24]}_{len(out_wb.sheetnames)}"
+            ws_po = out_wb.create_sheet(title=safe_title)
+            ws_po.append(headers)
+            for r in output_table:
+                if r["PO File"] == po_name:
+                    ws_po.append([r[h] for h in headers])
+
+        buf = io.BytesIO()
+        out_wb.save(buf)
+        buf.seek(0)
+
+        st.download_button(
+            label="⬇ Download Multi-Sheet Excel Report (.xlsx)",
+            data=buf,
+            file_name="vpg_po_price_recheck_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    else:
+        st.markdown(
+            "<div style='background:#ffffff; color:#000000; border:1px solid #000000; border-radius:0 0 10px 10px; padding:14px;'>"
+            "No matching items found for the selected filter."
+            "</div>",
+            unsafe_allow_html=True,
+        )
